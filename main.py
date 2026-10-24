@@ -46,7 +46,7 @@ def shutdown(state: SharedState, threads: list, engine, server=None) -> None:
     for t in threads:
         t.join(timeout=3)
     if engine is not None:
-        engine.stop()  # Pastikan tidak ada nada menggantung & tutup FluidSynth
+        engine.stop()
 
 
 def main(argv=None) -> int:
@@ -65,12 +65,13 @@ def main(argv=None) -> int:
 
     state = SharedState()
     try:
+        # require_camera diset False agar tidak crash di cloud server yang tidak punya kamera
         threads, engine = start_pipeline(
             state,
             args.camera,
             want_video=not args.headless,
             soundfont=args.soundfont,
-            require_camera=args.headless,
+            require_camera=False,
         )
     except Exception as e:  # noqa: BLE001
         print(f"ERROR: gagal memulai audio/pipeline: {e}", file=sys.stderr)
@@ -82,9 +83,7 @@ def main(argv=None) -> int:
 
         server = ServerThread(state, args.port)
         server.start()
-        print(
-            f"Dashboard berjalan pada http://{config.HOST}:{args.port}"
-        )
+        print(f"Dashboard berjalan pada http://{config.HOST}:{args.port}")
 
     print("Musicozie berjalan. Ctrl+C untuk berhenti.")
 
@@ -98,7 +97,7 @@ def main(argv=None) -> int:
             )
             if server is not None and not server.is_alive():
                 print(
-                    f"ERROR: dashboard gagal start di port {args.port}. Coba check port binding.",
+                    f"ERROR: dashboard gagal start di port {args.port}.",
                     file=sys.stderr,
                 )
                 return_code = 1
