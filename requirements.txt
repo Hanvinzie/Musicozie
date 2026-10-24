@@ -7,3 +7,4 @@ pyfluidsynth==1.4.0
 pytest==9.1.1
 uvicorn==0.54.0
 websockets==17.3
+requests==2.31.0
