@@ -1,17 +1,17 @@
 """Konstanta global Musicozie: path aset, threshold, mapping MIDI & gestur."""
 from pathlib import Path
+import os
+import urllib.request
 
 ROOT = Path(__file__).resolve().parent
 VERSION = "1.0"
-
-import urllib.request
 
 # --- Aset ---
 SOUNDFONT_PATH = ROOT / "TBOSf.sf2"
 HAND_MODEL_PATH = ROOT / "models" / "hand_landmarker.task"
 DASHBOARD_DIR = ROOT / "dashboard"
 
-GITHUB_SF2_URL = "https://github.com/username/musicozie/releases/download/v1.0.0/TBOSf.sf2"
+GITHUB_SF2_URL = "https://github.com/Hanvinzie/Musicozie/releases/download/v1.0.0/TBOSf.sf2"
 
 if not SOUNDFONT_PATH.exists():
     print(f"Downloading {SOUNDFONT_PATH.name} from GitHub Release...")
@@ -38,6 +38,8 @@ JPEG_QUALITY = 70
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 8000
 WS_HZ = 30
+PORT = int(os.environ.get("PORT", 8000))
+HOST = os.environ.get("HOST", "0.0.0.0")
 
 # --- Peran tangan (sudut pandang pemain). Tukar kedua nilai ini untuk membalik peran tangan; UI ikut berubah. ---
 MELODY_HAND = "right"     # tangan yang membentuk gestur nada C-B
