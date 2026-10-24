@@ -1,0 +1,9 @@
+venv/
+.venv/
+__pycache__/
+.DS_Store
+.pytest_cache/
+*.sf2
+*.dylib
+*.so
+TBOSf.sf2

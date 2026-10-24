@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Musicozie: a virtual instrument you play with finger gestures through a webcam.">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0d0d0d">
+  <title>Musicozie</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <script src="/assets/theme.js"></script>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to main content</a>
+
+  <header class="top">
+    <div class="brand">Musicozie <span>/ Gesture Instrument</span></div>
+    <div class="top-right">
+      <span class="stat" id="stFps" title="Frames per second">FPS -</span>
+      <span class="stat" id="stLat" title="Estimated capture-to-audio-buffer latency">LATENCY -</span>
+      <div class="badge warn" id="badge" role="status" aria-live="polite"><span class="dot" aria-hidden="true"></span><span id="badgeText">CONNECTING</span></div>
+    </div>
+  </header>
+
+  <main id="main">
+    <noscript><p class="noscript">This dashboard requires JavaScript.</p></noscript>
+
+    <div class="layout">
+      <section class="card cam-card" aria-labelledby="camTitle">
+        <div class="card-head">
+          <h2 class="card-title" id="camTitle">Camera</h2>
+          <button type="button" class="switch" id="camSwitch" role="switch" aria-checked="true" aria-label="Camera">
+            <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+            <span class="switch-text" id="camSwitchText">ON</span>
+          </button>
+        </div>
+
+        <div class="stage" id="stage">
+          <img id="cam" alt="Camera view with hand tracking" width="640" height="480">
+          <canvas id="overlay" aria-hidden="true"></canvas>
+          <div class="stage-msg" id="stageMsg" role="status">
+            <p id="stageMsgText"></p>
+            <button type="button" class="btn small" id="camOnBtn" hidden>Turn camera on</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="resSelect">Camera resolution</label>
+          <select id="resSelect">
+            <option value="640x480">640 x 480 (recommended)</option>
+            <option value="320x240">320 x 240 (lowest latency)</option>
+          </select>
+        </div>
+      </section>
+
+      <div class="col">
+        <section class="card now" aria-label="Now playing">
+          <div class="hud">
+            <div class="hud-left" aria-live="polite">
+              <div class="hud-note idle" id="hudNote">-</div>
+              <div class="hud-status" id="hudStatus">[MODE: MAJOR]</div>
+            </div>
+            <div class="hud-right">
+              <span class="pill" id="hudMode">PIANO</span>
+              <div class="switchbar" aria-hidden="true"><div class="switchbar-fill" id="switchFill"></div></div>
+              <div class="switchtxt" id="switchTxt"></div>
+            </div>
+          </div>
+
+          <div class="hands">
+            <div class="hand-box">
+              <div class="hand-head"><span id="leftTitle">RIGHT HAND · MELODY</span><span class="hand-code" id="lhState"></span></div>
+              <div class="bits" id="lhBits" role="img" aria-label="Left hand finger state"></div>
+              <div class="minor-flag" id="flagLeft"></div>
+            </div>
+            <div class="hand-box">
+              <div class="hand-head"><span id="rightTitle">LEFT HAND · MINOR</span><span class="hand-code" id="rhState"></span></div>
+              <div class="bits" id="rhBits" role="img" aria-label="Right hand finger state"></div>
+              <div class="minor-flag" id="flagRight"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="card controls" aria-label="Settings">
+          <div class="field">
+            <span class="label" id="instLabel">Instrument</span>
+            <div class="seg" role="group" aria-labelledby="instLabel">
+              <button type="button" class="btn lg" id="instPiano" aria-pressed="true">PIANO</button>
+              <button type="button" class="btn lg" id="instViolin" aria-pressed="false">VIOLIN</button>
+            </div>
+            <p class="note" id="instNote">Changing the instrument stops any note that is sounding.</p>
+          </div>
+          <div class="field">
+            <label for="debounce">Debounce (ms)</label>
+            <input type="number" id="debounce" value="100" min="0" max="1000" step="10" inputmode="numeric">
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <details class="drawer" id="guide">
+      <summary>
+        <span class="drawer-title">How to Play</span>
+        <span class="drawer-hint"><kbd>?</kbd> open / close</span>
+      </summary>
+      <div class="drawer-body">
+        <ol class="steps">
+          <li><b><span data-cfg="melody">Right</span> hand = melody.</b> Form one of the 8 gestures below; the note sounds for as long as you hold the gesture.</li>
+          <li><b><span data-cfg="modifier">Left</span> hand = minor modifier.</b> With the <span data-cfg="modifier-l">left</span> hand idle or in any gesture other than <b>thumb only</b> (<code data-cfg="trigger">10000</code>), notes stay <b>major</b> (C scale).</li>
+          <li><b>Minor Toggle:</b> while the <span data-cfg="modifier-l">left</span> hand shows <b>only the thumb open</b>, every <span data-cfg="melody-l">right</span>-hand gesture plays 1 semitone lower (<span class="amber">minor / flat</span>). Release the thumb to return to major.</li>
+          <li><b>Fist</b> (<code>00000</code>) or an unknown gesture = silence.</li>
+          <li><b>Switch instrument:</b> hold a fist with <b>both hands</b> for <b><span data-cfg="hold">1.5</span> seconds</b> (or click the Piano / Violin button).</li>
+        </ol>
+
+        <h3 class="g-head">NOTE GESTURES (ONE HAND, 5 FINGERS)</h3>
+        <div id="guideNotes"></div>
+
+        <div class="g-box" id="minorBox"></div>
+        <div class="g-box" id="modeBox"></div>
+
+        <p class="legend">
+          Diagram: T = thumb, I = index, M = middle, R = ring, P = pinky. White = open, empty = closed.
+          The row being detected right now lights up green (amber while Minor is active).<br>
+          Tips: face your palm to the camera, keep the whole hand in view, use good lighting and stay about 40-60 cm away. Hold a gesture
+          for about 0.1 s (debounce) so the note changes cleanly. The <span data-cfg="modifier-l">left</span> hand alone (without the <span data-cfg="melody-l">right</span> hand) does not play.
+        </p>
+      </div>
+    </details>
+  </main>
+
+  <footer class="foot">
+    <span>&copy; 2026 Hanvinzie. All rights reserved. Musicozie <span id="appVersion">v1.0</span></span>
+    <div class="foot-right">
+      <span>Runs locally &middot; camera and audio are processed on this computer and never sent elsewhere.</span>
+      <button type="button" class="theme-toggle" id="themeToggle" aria-label="Switch to light mode" title="Switch theme">
+        <span class="theme-icon" id="themeIcon" aria-hidden="true">&#9790;</span><span id="themeText">Dark</span>
+      </button>
+    </div>
+  </footer>
+
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>
