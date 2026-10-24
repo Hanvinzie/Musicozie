@@ -1,5 +1,6 @@
 """Konstanta global Musicozie: path aset, threshold, mapping MIDI & gestur."""  
 import os  
+import sys
 from pathlib import Path  
 import requests
 
@@ -53,7 +54,6 @@ FRAME_HEIGHT = 480
 JPEG_QUALITY = 70
 
 # --- Server Configuration ---  
-# Gunakan port & host dari environment variable agar kompatibel dengan Render
 PORT = int(os.environ.get("PORT", 8000))  
 HOST = os.environ.get("HOST", "0.0.0.0")  
 SERVER_HOST = HOST  
@@ -73,8 +73,14 @@ OPEN_RATIO = 1.25
 THUMB_TUCK_RATIO = 0.95  
 MIN_HAND_SCORE = 0.5  
 
-# --- Audio (FluidSynth) ---  
-AUDIO_DRIVER = "coreaudio"  
+# --- Audio (FluidSynth Driver Auto-Detect) ---  
+if sys.platform == "darwin":
+    AUDIO_DRIVER = "coreaudio"
+elif sys.platform == "win32":
+    AUDIO_DRIVER = "dsound"
+else:
+    AUDIO_DRIVER = "alsa"  # Linux / Render Cloud
+
 AUDIO_PERIOD_SIZE = 512  
 AUDIO_PERIODS = 2  
 SAMPLE_RATE = 44100  
