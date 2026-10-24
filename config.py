@@ -1,32 +1,53 @@
 """Konstanta global Musicozie: path aset, threshold, mapping MIDI & gestur."""
 from pathlib import Path
 import os
-import urllib.request
+from fastapi import requests
 
 ROOT = Path(__file__).resolve().parent
 VERSION = "1.0"
 
-# --- Aset ---
+ROOT = Path(__file__).resolve().parent
+
+# --- Path Aset ---
 SOUNDFONT_PATH = ROOT / "TBOSf.sf2"
 HAND_MODEL_PATH = ROOT / "models" / "hand_landmarker.task"
 DASHBOARD_DIR = ROOT / "dashboard"
 
+# URL Direct GitHub Release
 GITHUB_SF2_URL = "https://github.com/Hanvinzie/Musicozie/releases/download/v1.0.0/TBOSf.sf2"
 
-if not SOUNDFONT_PATH.exists():
-    print(f"Downloading {SOUNDFONT_PATH.name} from GitHub Release...")
-    try:
-        SOUNDFONT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        # Menambahkan User-Agent agar tidak diblokir oleh GitHub
-        req = urllib.request.Request(
-            GITHUB_SF2_URL, 
-            headers={'User-Agent': 'Mozilla/5.0'}
-        )
-        with urllib.request.urlopen(req) as response, open(SOUNDFONT_PATH, 'wb') as out_file:
-            out_file.write(response.read())
-        print("SoundFont download completed successfully!")
-    except Exception as e:
-        print(f"Failed to download SoundFont from GitHub Release: {e}")
+def ensure_soundfont():
+    """Memastikan file SoundFont ada; unduh dari GitHub Release jika belum ada."""
+    if not SOUNDFONT_PATH.exists():
+        print(f"Downloading {SOUNDFONT_PATH.name} from GitHub Release...")
+        try:
+            SOUNDFONT_PATH.parent.mkdir(parents=True, exist_ok=True)
+            headers = {"User-Agent": "Mozilla/5.0"}
+            
+            # Tambahkan timeout 30 detik untuk koneksi
+            response = requests.get(
+                GITHUB_SF2_URL, 
+                headers=headers, 
+                stream=True, 
+                allow_redirects=True, 
+                timeout=30
+            )
+            response.raise_for_status()
+
+            with open(SOUNDFONT_PATH, "wb") as out_file:
+                for chunk in response.iter_content(chunk_size=1024 * 1024): # 1MB per chunk
+                    if chunk:
+                        out_file.write(chunk)
+            print("SoundFont download completed successfully!")
+            
+        except Exception as e:
+            print(f"CRITICAL: Failed to download SoundFont: {e}")
+            if SOUNDFONT_PATH.exists():
+                SOUNDFONT_PATH.unlink()
+            raise RuntimeError(f"Required asset {SOUNDFONT_PATH.name} could not be downloaded.") from e
+
+# Jalankan pengecekan saat module config dimuat
+ensure_soundfont()
 
 # --- Kamera ---
 CAMERA_INDEX = 0
