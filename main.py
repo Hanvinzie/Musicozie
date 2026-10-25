@@ -56,7 +56,8 @@ def main(argv=None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    if not args.soundfont.exists():
+    # Di cloud, suara diputar di browser (engine.js), jadi SoundFont server tidak wajib ada.
+    if not config.is_cloud_environment() and not args.soundfont.exists():
         print(
             f"ERROR: SoundFont tidak ditemukan: {args.soundfont}\nGunakan --soundfont <path.sf2>.",
             file=sys.stderr,

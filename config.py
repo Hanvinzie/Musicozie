@@ -15,6 +15,21 @@ DASHBOARD_DIR = ROOT / "dashboard"
 # Direct URL GitHub Release Asset
 GITHUB_SF2_URL = "https://github.com/Hanvinzie/Musicozie/releases/download/v1.0.0/TBOSf.sf2"
 
+def is_cloud_environment() -> bool:
+    """True jika server berjalan di platform cloud tanpa kamera/sound card (mis. Render).
+
+    Di mode ini kamera, deteksi tangan, logika gestur, dan suara dijalankan di browser pengunjung
+    (dashboard/assets/engine.js), jadi server tidak butuh SoundFont maupun mesin audio.
+    Bisa dipaksa lewat env MUSICOZIE_CLIENT_CAMERA=1 / 0. Render mengisi env RENDER=true secara otomatis.
+    """
+    flag = os.environ.get("MUSICOZIE_CLIENT_CAMERA", "").strip().lower()
+    if flag in ("1", "true", "yes", "on"):
+        return True
+    if flag in ("0", "false", "no", "off"):
+        return False
+    return bool(os.environ.get("RENDER"))
+
+
 def ensure_soundfont():
     """Memastikan file SoundFont ada; unduh dari GitHub Release jika belum ada."""
     if not SOUNDFONT_PATH.exists():
@@ -45,7 +60,8 @@ def ensure_soundfont():
             raise RuntimeError(f"Required asset {SOUNDFONT_PATH.name} could not be downloaded.") from e
 
 # Panggil otomatis saat modul di-import
-ensure_soundfont()
+if not is_cloud_environment():  # server cloud tidak memutar suara: SoundFont 83 MB tidak perlu diunduh
+    ensure_soundfont()
 
 # --- Kamera ---
 CAMERA_INDEX = 0

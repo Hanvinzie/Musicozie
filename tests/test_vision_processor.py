@@ -111,6 +111,8 @@ def test_hud_draws_without_error_and_changes_pixels():
 
 
 def test_processor_loads_model_and_handles_blank_frame():
+    pytest.importorskip("mediapipe")
+    pytest.importorskip("cv2")
     proc = vp.VisionProcessor()
     try:
         frame, hands = proc.process(np.zeros((480, 640, 3), np.uint8))

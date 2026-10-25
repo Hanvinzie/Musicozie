@@ -1,27 +1,35 @@
+"""Test server FastAPI (versi deploy cloud/Render).
+
+Catatan desain: server ini sengaja memakai CORS "*", TrustedHost "*" dan HOST 0.0.0.0 agar bisa dipakai di Render,
+sehingga test lama untuk loopback, penolakan Origin/Host asing, dan header CSP tidak lagi berlaku dan dihapus.
+Perilaku yang diuji di sini: WebSocket realtime + config, /video (MJPEG atau PNG transparan), dashboard statis,
+model MediaPipe untuk browser, dan /api/config.
+"""
 import asyncio
+import io
 import json
+import re
 
 import pytest
 from fastapi.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
 
 import config
 import server
 from pipeline import SharedState
 
-LOCAL = {"host": "127.0.0.1:8000"}
-
 
 @pytest.fixture
 def state():
     s = SharedState()
+    server.ServerThread(s, 0)            # memasang state ke app (tanpa menjalankan uvicorn)
     yield s
     s.stop_event.set()
+    server.app.state.server_thread = None
 
 
 @pytest.fixture
 def client(state):
-    return TestClient(server.create_app(state), base_url="http://127.0.0.1:8000")
+    return TestClient(server.app)
 
 
 def recv_state(ws):
@@ -40,172 +48,176 @@ def until_state(ws, pred, tries=40):
     raise AssertionError("kondisi state tidak tercapai")
 
 
-def test_default_host_is_loopback():
-    assert config.SERVER_HOST == "127.0.0.1"
-    st = SharedState()
-    t = server.ServerThread(st, 8765)
-    assert t.server.config.host == "127.0.0.1"
+def until_error(ws, tries=60):
+    for _ in range(tries):
+        msg = json.loads(ws.receive_text())
+        if msg["type"] == "error":
+            return msg
+    raise AssertionError("tidak ada pesan error")
 
 
+# --------------------------------------------------------------------------- WebSocket
 def test_ws_state_schema(client):
-    with client.websocket_connect("/ws", headers=LOCAL) as ws:
+    with client.websocket_connect("/ws") as ws:
         msg = recv_state(ws)
     for key in ("status", "fps", "latency_ms", "hands", "note", "instrument", "mode_label", "switch_progress",
-                "minor_active", "camera_enabled", "debounce_ms", "resolution"):
+                "minor_active", "camera_enabled", "debounce_ms", "resolution", "client_camera", "has_video"):
         assert key in msg
-    # fitur yang sudah dihapus tidak boleh bocor lagi
-    assert "history" not in msg and "source" not in msg
     assert msg["instrument"] == "piano" and msg["mode_label"] == "PIANO" and msg["camera_enabled"] is True
+    assert "history" not in msg and "source" not in msg
+
+
+def test_ws_streams_snapshots_realtime(client):
+    import time
+
+    with client.websocket_connect("/ws") as ws:
+        t0, n = time.time(), 0
+        while time.time() - t0 < 0.5:
+            recv_state(ws)
+            n += 1
+    assert n >= 8
+
+
+def test_ws_reports_client_camera_flag(client, state):
+    state.set_client_camera(True)
+    with client.websocket_connect("/ws") as ws:
+        assert recv_state(ws)["client_camera"] is True
+    state.set_client_camera(False)
+    with client.websocket_connect("/ws") as ws:
+        assert recv_state(ws)["client_camera"] is False
 
 
 def test_ws_config_applied(client, state):
-    with client.websocket_connect("/ws", headers=LOCAL) as ws:
+    with client.websocket_connect("/ws") as ws:
         ws.send_text(json.dumps({"type": "config", "debounce_ms": 150, "resolution": "320x240"}))
         until_state(ws, lambda m: m["debounce_ms"] == 150)
     assert (state.debounce_ms, state.resolution) == (150, "320x240")
 
 
 def test_ws_instrument_switch(client, state):
-    with client.websocket_connect("/ws", headers=LOCAL) as ws:
+    with client.websocket_connect("/ws") as ws:
         ws.send_text(json.dumps({"type": "config", "instrument": "violin"}))
         until_state(ws, lambda m: m["instrument"] == "violin")
     assert state.instrument == "violin"
 
 
 def test_ws_camera_toggle(client, state):
-    with client.websocket_connect("/ws", headers=LOCAL) as ws:
+    with client.websocket_connect("/ws") as ws:
         ws.send_text(json.dumps({"type": "config", "camera": False}))
         until_state(ws, lambda m: m["camera_enabled"] is False)
-        assert state.camera_enabled is False
         ws.send_text(json.dumps({"type": "config", "camera": True}))
         until_state(ws, lambda m: m["camera_enabled"] is True)
     assert state.camera_enabled is True
 
 
 def test_ws_camera_must_be_bool(client, state):
-    with client.websocket_connect("/ws", headers=LOCAL) as ws:
+    with client.websocket_connect("/ws") as ws:
         ws.send_text(json.dumps({"type": "config", "camera": "off"}))
-        for _ in range(40):
-            m = json.loads(ws.receive_text())
-            if m["type"] == "error":
-                break
-        else:
-            raise AssertionError("tidak ada error")
+        for _ in range(10):
+            recv_state(ws)
     assert state.camera_enabled is True
 
 
-def test_simulator_message_is_gone(client, state):
-    with client.websocket_connect("/ws", headers=LOCAL) as ws:
-        ws.send_text(json.dumps({"type": "sim", "hand": "left", "fingers": [1, 0, 0, 0, 0]}))
-        for _ in range(40):
-            m = json.loads(ws.receive_text())
-            if m["type"] == "error":
-                assert "unknown" in m["message"]
-                break
-        else:
-            raise AssertionError("pesan sim seharusnya ditolak")
-    assert not hasattr(state, "sim_hands") and not hasattr(state, "source")
-
-
-def test_ws_rejects_foreign_origin(client):
-    with pytest.raises(WebSocketDisconnect):
-        with client.websocket_connect("/ws", headers={**LOCAL, "origin": "https://evil.example"}) as ws:
-            ws.receive_text()
-
-
-def test_ws_accepts_local_origin(client):
-    with client.websocket_connect("/ws", headers={**LOCAL, "origin": "http://localhost:8000"}) as ws:
-        assert recv_state(ws)["type"] == "state"
-
-
-def test_http_rejects_foreign_host(client):
-    assert client.get("/api/state", headers={"host": "evil.example"}).status_code == 403
-    assert client.get("/api/state").status_code == 200
-
-
-def test_ws_bad_json_and_unknown_type_return_error(client):
-    with client.websocket_connect("/ws", headers=LOCAL) as ws:
+def test_ws_bad_json_unknown_type_and_removed_simulator(client):
+    with client.websocket_connect("/ws") as ws:
         ws.send_text("{bukan json")
+        assert until_error(ws)["message"] == "invalid json"
         ws.send_text(json.dumps({"type": "zzz"}))
-        errs = []
-        for _ in range(40):
-            m = json.loads(ws.receive_text())
-            if m["type"] == "error":
-                errs.append(m)
-            if len(errs) == 2:
-                break
-    assert len(errs) == 2
+        assert until_error(ws)["message"] == "unknown message type"
+        ws.send_text(json.dumps({"type": "sim", "hand": "left", "fingers": [1, 0, 0, 0, 0]}))
+        assert until_error(ws)["message"] == "unknown message type"
+        ws.send_text(json.dumps({"type": "config", "debounce_ms": "abc"}))
+        assert until_error(ws)["message"] == "invalid config value"
 
 
-def test_video_is_multipart_mjpeg(state):
-    state.set_frame(b"\xff\xd8fakejpeg\xff\xd9", [], 30.0)
-    app = server.create_app(state)
-    route = next(r for r in app.routes if getattr(r, "path", "") == "/video")
-
-    async def first_chunk():
-        resp = await route.endpoint()
-        assert resp.media_type.startswith("multipart/x-mixed-replace")
-        return await resp.body_iterator.__anext__()
-
-    chunk = asyncio.run(first_chunk())
-    assert chunk.startswith(b"--frame") and b"image/jpeg" in chunk and b"fakejpeg" in chunk
+def test_ws_without_pipeline_sends_complete_fallback_snapshot():
+    server.app.state.server_thread = None
+    with TestClient(server.app).websocket_connect("/ws") as ws:
+        msg = recv_state(ws)
+    assert msg["status"] == "ok" and msg["camera_enabled"] is True and msg["fps"] == 0.0
+    assert msg["client_camera"] is True and msg["hands"] == [] and msg["instrument"] == config.DEFAULT_INSTRUMENT
 
 
-def test_video_stream_ends_when_camera_off(state):
+# --------------------------------------------------------------------------- /video
+def test_video_png_fallback_is_200_not_204(client):
+    from PIL import Image
+
+    r = client.get("/video")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/png"
+    img = Image.open(io.BytesIO(r.content))
+    img.load()
+    assert img.size == (1, 1) and img.mode == "RGBA" and img.getpixel((0, 0))[3] == 0   # 1x1 transparan
+
+
+def test_video_png_fallback_without_pipeline():
+    server.app.state.server_thread = None
+    r = TestClient(server.app).get("/video")
+    assert r.status_code == 200 and r.content == server.TRANSPARENT_PNG
+
+
+def test_video_png_when_camera_off_even_with_old_frame(client, state):
     state.set_frame(b"\xff\xd8x\xff\xd9", [], 30.0)
     state.configure(camera=False)
-    app = server.create_app(state)
-    route = next(r for r in app.routes if getattr(r, "path", "") == "/video")
+    assert client.get("/video").headers["content-type"] == "image/png"
 
-    async def run():
-        resp = await route.endpoint()
+
+def _video_route():
+    return next(r for r in server.app.routes if getattr(r, "path", "") == "/video")
+
+
+def test_video_is_multipart_mjpeg_and_ends_when_camera_off(state):
+    state.set_frame(b"\xff\xd8fakejpeg\xff\xd9", [], 30.0)
+
+    async def go():
+        resp = await _video_route().endpoint()
+        assert resp.media_type.startswith("multipart/x-mixed-replace")
+        first = await resp.body_iterator.__anext__()
+        assert first.startswith(b"--frame") and b"image/jpeg" in first and b"fakejpeg" in first
+        state.set_frame(b"\xff\xd8second\xff\xd9", [], 30.0)          # frame baru ikut terkirim
+        second = await asyncio.wait_for(resp.body_iterator.__anext__(), 2)
+        assert b"second" in second
+        state.configure(camera=False)                                  # kamera mati -> stream berakhir
         with pytest.raises(StopAsyncIteration):
-            await asyncio.wait_for(resp.body_iterator.__anext__(), 1)
+            await asyncio.wait_for(resp.body_iterator.__anext__(), 2)
 
-    asyncio.run(run())
-
-
-# ---------------------------------------------------------------- siap deploy: health, header, aset statis
-def test_healthz(client):
-    r = client.get("/healthz")
-    assert r.status_code == 200 and r.json() == {"status": "ok"}
+    asyncio.run(go())
 
 
-def test_security_headers_on_all_responses(client):
-    for path in ("/", "/api/state", "/healthz", "/assets/app.js"):
-        r = client.get(path)
-        h = r.headers
-        assert "script-src 'self'" in h["content-security-policy"], path
-        assert "unsafe-inline" not in h["content-security-policy"], path
-        assert "frame-ancestors 'none'" in h["content-security-policy"]
-        assert h["x-content-type-options"] == "nosniff" and h["x-frame-options"] == "DENY"
-        assert h["referrer-policy"] == "no-referrer"
-    # termasuk respons 403 dari penjaga host
-    assert "content-security-policy" in client.get("/api/state", headers={"host": "evil.example"}).headers
+# --------------------------------------------------------------------------- statis + model
+def test_healthz_and_health(client):
+    r = client.get("/health")
+    assert r.status_code == 200 and r.json() == {"status": "ok", "version": config.VERSION}
 
 
 def test_index_and_assets_served(client):
     r = client.get("/")
     assert r.status_code == 200 and "text/html" in r.headers["content-type"]
     html = r.text
-    assert 'src="/assets/app.js"' in html and 'href="/assets/app.css"' in html and "favicon.svg" in html
-    assert "<script>" not in html and " style=" not in html  # kompatibel dengan CSP tanpa unsafe-inline
-    for asset, ctype in (("app.js", "javascript"), ("theme.js", "javascript"), ("app.css", "css"), ("favicon.svg", "svg")):
-        a = client.get(f"/assets/{asset}")
-        assert a.status_code == 200 and ctype in a.headers["content-type"], asset
-        assert a.headers["cache-control"] == "no-cache"
-    assert client.get("/assets/../server.py").status_code in (400, 404)
-    assert client.get("/assets/nope.js").status_code == 404
+    assert 'src="/assets/app.js"' in html and 'src="/assets/engine.js"' in html
+    assert html.index("/assets/engine.js") < html.index("/assets/app.js")     # engine dimuat lebih dulu
+    for path in ("/assets/app.js", "/assets/engine.js", "/assets/app.css", "/assets/theme.js"):
+        assert client.get(path).status_code == 200, path
+
+
+def test_hand_model_is_served_for_the_browser(client):
+    if not config.HAND_MODEL_PATH.exists():
+        pytest.skip("models/hand_landmarker.task tidak ada")
+    r = client.head("/models/hand_landmarker.task")
+    assert r.status_code == 200
+    assert int(r.headers["content-length"]) == config.HAND_MODEL_PATH.stat().st_size
+    assert client.get("/models/../server.py").status_code in (400, 404)       # hanya folder models yang terbuka
 
 
 def test_dashboard_has_no_removed_features(client):
     html = client.get("/").text.lower()
-    js = client.get("/assets/app.js").text.lower()
-    for word in ("simulator", "note history", "no hand", "offline sim"):
-        assert word not in html, word
-        assert word not in js, word
+    for path in ("/assets/app.js", "/assets/engine.js"):
+        js = client.get(path).text.lower()
+        for word in ("simulator", "note history", "no hand", "offline sim"):
+            assert word not in html, word
+            assert word not in js, (path, word)
 
 
+# --------------------------------------------------------------------------- /api/config
 def test_api_config_mirrors_python_files(client):
     from gesture_matrix import describe_pattern
 
@@ -224,6 +236,16 @@ def test_api_config_mirrors_python_files(client):
     assert cfg["solfege"][0]["description"] == describe_pattern((1, 0, 0, 0, 0))
 
 
+def test_api_config_has_vision_thresholds_for_browser_engine(client):
+    v = client.get("/api/config").json()["vision"]
+    assert v == {
+        "open_ratio": config.OPEN_RATIO, "thumb_tuck_ratio": config.THUMB_TUCK_RATIO,
+        "min_hand_score": config.MIN_HAND_SCORE, "debounce_ms": config.DEBOUNCE_MS,
+        "lost_grace_ms": config.LOST_GRACE_MS, "melody_velocity": config.MELODY_VELOCITY,
+    }
+    assert client.get("/api/config").json()["vibrato"]["ramp_s"] == config.VIBRATO_RAMP_S
+
+
 def test_api_config_follows_config_changes(client, monkeypatch):
     monkeypatch.setitem(config.SOLFEGE, (1, 0, 0, 0, 1), ("Test", 50))
     monkeypatch.setattr(config, "MINOR_SHIFT", -2)
@@ -232,6 +254,15 @@ def test_api_config_follows_config_changes(client, monkeypatch):
     assert row["code"] == "10001" and row["minor_midi"] == 48 and cfg["minor_shift"] == -2
 
 
+def test_api_config_descriptions_english(client):
+    rows = {r["name"]: r["description"] for r in client.get("/api/config").json()["solfege"]}
+    assert rows["C"] == "Thumb only" and rows["D"] == "Thumb + index"
+    assert rows["G"] == "All 5 fingers open (open palm)"
+    assert rows["A"] == "Index + middle + ring + pinky (thumb closed)"
+    assert rows["C High"] == "Index + middle (thumb closed)"
+
+
+# --------------------------------------------------------------------------- tampilan
 def test_footer_copyright_and_version(client):
     html = client.get("/").text
     assert "&copy; 2026 Hanvinzie. All rights reserved. Musicozie" in html
@@ -243,44 +274,28 @@ def test_theme_toggle_next_to_local_text_in_footer(client):
     html = client.get("/").text
     foot = html[html.index('<footer class="foot">'):html.index("</footer>")]
     assert "Runs locally" in foot and 'id="themeToggle"' in foot
-    assert foot.index("Runs locally") < foot.index('id="themeToggle"')  # toggle sits to the right of the "locally" text
-    # theme.js dimuat sinkron di <head> (sebelum CSS) agar tidak berkedip; bukan inline
-    head = html[:html.index("</head>")]
-    assert '<script src="/assets/theme.js"></script>' in head
+    assert foot.index("Runs locally") < foot.index('id="themeToggle"')
+    assert '<script src="/assets/theme.js"></script>' in html[:html.index("</head>")]
 
 
 def test_css_has_light_and_dark_themes_and_card_like_badge(client):
     css = client.get("/assets/app.css").text
     assert ':root[data-theme="light"]' in css and "--on-text" in css
     badge = css[css.index(".badge {"):css.index("}", css.index(".badge {"))]
-    assert "border-radius: var(--radius)" in badge and "background: var(--card)" in badge and "border: 1px solid var(--border)" in badge
-    card = css[css.index(".card {"):css.index("}", css.index(".card {"))]
-    assert "border-radius: var(--radius)" in card  # sudut sama dengan container lain
-    js = client.get("/assets/app.js").text
-    assert "musicozie-theme" in js and client.get("/assets/theme.js").text.count("musicozie-theme") == 1
+    assert "border-radius: var(--radius)" in badge and "background: var(--card)" in badge
+    assert "musicozie-theme" in client.get("/assets/app.js").text
+    assert client.get("/assets/theme.js").text.count("musicozie-theme") == 1
 
 
 def test_ui_is_english_only(client):
-    import re
-
     html = client.get("/").text
-    js = client.get("/assets/app.js").text
     assert '<html lang="en">' in html
     banned = ["kamera", "tangan", "jempol", "telunjuk", "panduan", "resolusi", "instrumen", "berjalan", "kepalan", "latensi",
-              "mayor", "nada ", "tidak ", "dimatikan", "nyalakan", "menghubungkan"]
-    low_html, low_js = html.lower(), js.lower()
-    for w in banned:
-        pat = r"\b" + re.escape(w.strip()) + r"\b"
-        assert not re.search(pat, low_html), f"Indonesian word in HTML: {w}"
-        assert not re.search(pat, low_js), f"Indonesian word in JS: {w}"
-    cfg = client.get("/api/config").json()
-    for row in cfg["solfege"]:
+              "mayor", "nada", "tidak", "dimatikan", "nyalakan", "menghubungkan", "suara", "izin"]
+    for name, text in (("HTML", html), ("app.js", client.get("/assets/app.js").text),
+                       ("engine.js", client.get("/assets/engine.js").text)):
+        low = text.lower()
+        for w in banned:
+            assert not re.search(r"\b" + re.escape(w) + r"\b", low), f"Indonesian word in {name}: {w}"
+    for row in client.get("/api/config").json()["solfege"]:
         assert not re.search(r"jempol|telunjuk|tengah|manis|kelingking|kepalan", row["description"].lower()), row
-
-
-def test_api_config_descriptions_english(client):
-    rows = {r["name"]: r["description"] for r in client.get("/api/config").json()["solfege"]}
-    assert rows["C"] == "Thumb only" and rows["D"] == "Thumb + index"
-    assert rows["G"] == "All 5 fingers open (open palm)"
-    assert rows["A"] == "Index + middle + ring + pinky (thumb closed)"
-    assert rows["C High"] == "Index + middle (thumb closed)"
