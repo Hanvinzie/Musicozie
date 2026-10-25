@@ -79,33 +79,6 @@ mengangkat jempol kanan nada mayor bisa terdengar sekejap sebelum turun (status 
 Kalibrasi: deteksi ibu jari memakai `THUMB_TUCK_RATIO` di `config.py`; jalankan `python -m vision_processor --debug`
 untuk melihat rasionya secara live dan sesuaikan bila jempol sering salah terbaca. Semua ambang belum diuji dengan tangan nyata.
 
-## Dashboard
-
-- **Kamera** (setengah lebar layout) + skeleton tangan; HUD OpenCV (instrumen, `[MODE: ...]`, nama nada) ikut tampil di video.
-- **Saklar kamera ON/OFF**: OFF = perangkat kamera dilepas (lampu kamera mati), tidak ada deteksi, nada langsung berhenti,
-  stream video berhenti. Nyalakan lagi dari saklar atau tombol "Nyalakan kamera". Bila kamera error (mis. izin belum diberikan),
-  tombol "Coba lagi" mematikan lalu menyalakan kamera.
-- Panel utama: nada aktif (mis. `E♭ (Minor)`), status `[MODE: MAJOR]` / `[MODE: MINOR TOGGLE ACTIVE]`, instrumen, bar progres pindah
-  mode, dan bit 5 jari tiap tangan. Tidak ada penanda "tangan terdeteksi/tidak"; lencana kanan atas hanya menunjukkan koneksi
-  server dan status kamera (ONLINE / KAMERA OFF / KAMERA ERROR / OFFLINE).
-- Pemilih instrumen (Piano / Violin), debounce, dan resolusi kamera (640x480 / 320x240).
-- **Mode tema Dark / Light** lewat tombol di footer kanan bawah (disimpan di browser; bawaan mengikuti pengaturan sistem).
-- **Panduan Permainan** berupa laci tenggelam yang tertutup secara bawaan; buka dengan klik, tombol `?`, atau tautan `/#guide`.
-  Isinya (tabel nada + diagram jari, Minor Toggle, pindah mode) dibaca dari Python lewat `GET /api/config`
-  (`config.py`, `gesture_matrix.py`, `instrument_modes.py`), jadi mengubah pola di `config.SOLFEGE` otomatis mengubah UI.
-- Seluruh teks UI dashboard berbahasa Inggris (README ini tetap berbahasa Indonesia).
-- Simulator dan riwayat nada sudah dihapus.
-
-### Struktur UI (siap deploy)
-
-```
-dashboard/index.html           # tanpa script/style inline
-dashboard/assets/app.css
-dashboard/assets/app.js        # vanilla JS, tanpa dependensi/CDN
-dashboard/assets/theme.js      # menerapkan tema sebelum render (tanpa kedip)
-dashboard/assets/favicon.svg
-```
-
 Server mengirim header keamanan di semua respons (CSP ketat tanpa `unsafe-inline`, `nosniff`, `X-Frame-Options: DENY`,
 `no-referrer`), aset statis di-revalidasi (ETag), dan `GET /healthz` tersedia untuk pemeriksaan kesehatan. WebSocket otomatis
 memakai `wss://` bila halaman dibuka lewat HTTPS dan menyambung ulang dengan backoff bila terputus.
@@ -121,9 +94,6 @@ Thread Vision (kamera + MediaPipe HandLandmarker) -> `queue(2)` buang-frame-lama
 (`gesture_matrix` + Minor Toggle + debounce + `instrument_modes.ModeSwitch`) -> `audio_q` -> thread Audio
 (FluidSynth, `coreaudio`, period-size 512, 2 periode; satu channel melodi, program piano/biola dari `TBOSf.sf2`, tick vibrato 100 Hz).
 Thread Server (FastAPI/uvicorn) melayani `/`, `/video` (MJPEG), `/ws` (state ~30 Hz, config, sim).
-
-Catatan: frame di-mirror sebelum inferensi, sehingga label tangan MediaPipe sudah sesuai tangan fisik pemain.
-`model_complexity` milik API lama `mp.solutions.hands` tidak ada pada Tasks API `HandLandmarker` yang dipakai di sini.
 
 ## Latensi
 
@@ -143,15 +113,3 @@ membaca stream atau mengontrol instrumen dari browser Anda.
 ```bash
 .venv/bin/pytest -q
 ```
-
-Checklist QA manual: lihat bagian bawah; semua langkah butuh kamera/speaker.
-
-- [ ] `check_env.py --camera` semua centang
-- [ ] 8 gestur menghasilkan C..C High yang benar (jempol terbaca benar; kalibrasi `THUMB_TUCK_RATIO` bila perlu)
-- [ ] Tangan kanan hanya jempol (`10000`) -> nada kiri turun 1 semitone, HUD `[MODE: MINOR TOGGLE ACTIVE]` dan `...♭ (Minor)`; jempol dilepas -> kembali mayor
-- [ ] Kepalan = diam; kepalan ganda 1,5 dtk -> Piano <-> Biola, bar progres tampil, tidak berulang selama kepalan ditahan
-- [ ] Biola: nada ditahan dengan vibrato halus; Piano: perkusif tanpa vibrato
-- [ ] Tangan keluar frame -> nada berhenti, tidak ada nada menggantung
-- [ ] Ctrl+C -> keluar bersih
-- [ ] Dashboard: kamera + skeleton + HUD muncul; saklar kamera OFF -> gambar hilang & nada berhenti, ON -> kembali; matikan server -> badge `OFFLINE`
-- [ ] Panduan terbuka/tertutup dengan klik dan tombol `?`
