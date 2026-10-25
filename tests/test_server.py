@@ -199,6 +199,16 @@ def test_index_and_assets_served(client):
         assert client.get(path).status_code == 200, path
 
 
+def test_dashboard_files_are_always_revalidated(client):
+    """Setelah deploy, browser tidak boleh menjalankan app.js lama dari cache."""
+    for path in ("/", "/assets/app.js", "/assets/engine.js", "/assets/app.css"):
+        r = client.get(path)
+        assert r.headers["cache-control"] == "no-cache", path
+    first = client.get("/assets/app.js")
+    again = client.get("/assets/app.js", headers={"If-None-Match": first.headers["etag"]})
+    assert again.status_code == 304 and again.headers["cache-control"] == "no-cache"   # murah: tanpa unduh ulang
+
+
 def test_hand_model_is_served_for_the_browser(client):
     if not config.HAND_MODEL_PATH.exists():
         pytest.skip("models/hand_landmarker.task tidak ada")
@@ -283,6 +293,8 @@ def test_css_has_light_and_dark_themes_and_card_like_badge(client):
     assert ':root[data-theme="light"]' in css and "--on-text" in css
     badge = css[css.index(".badge {"):css.index("}", css.index(".badge {"))]
     assert "border-radius: var(--radius)" in badge and "background: var(--card)" in badge
+    for rule in ("#stFps { min-width", "#stLat { min-width", "#soundBtn { min-width"):   # header must not jitter
+        assert rule in css, rule
     assert "musicozie-theme" in client.get("/assets/app.js").text
     assert client.get("/assets/theme.js").text.count("musicozie-theme") == 1
 

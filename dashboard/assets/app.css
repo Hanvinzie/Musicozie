@@ -49,6 +49,12 @@ h2, h3 { font-weight: inherit; font-size: inherit; }
 .badge.err .dot { background: var(--red); box-shadow: 0 0 8px var(--red); }
 .badge.off .dot { background: var(--muted); }
 
+/* Fixed widths: changing FPS / latency / status / sound text must never move the neighbouring items. */
+#stFps { min-width: 9ch; text-align: right; }
+#stLat { min-width: 18ch; text-align: right; }
+.badge { min-width: 158px; }
+#soundBtn { min-width: 118px; text-align: center; white-space: nowrap; }
+
 /* ---------- layout ---------- */
 .layout { display: grid; grid-template-columns: 1fr 2fr; gap: 24px; align-items: start; margin-bottom: 24px; }
 .col { display: flex; flex-direction: column; gap: 24px; min-width: 0; }

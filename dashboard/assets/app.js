@@ -447,7 +447,9 @@
    soundBtn.id = "soundBtn";
    soundBtn.hidden = true;
    soundBtn.addEventListener("click", onSoundClick);
-   host.insertBefore(soundBtn, host.firstChild);
+   var badge = $("badge");
+   if (badge && badge.parentNode === host) host.insertBefore(soundBtn, badge.nextSibling);   // right next to the status badge
+   else host.appendChild(soundBtn);
    return soundBtn;
  }
  function updateSoundBtn() {
@@ -456,10 +458,11 @@
    b.hidden = !clientMode;
    if (!clientMode) return;
    var st = synth ? synth.status() : "locked";
-   var labels = { locked: "SOUND OFF \u00b7 CLICK TO ENABLE", on: "SOUND ON", muted: "SOUND MUTED", unsupported: "NO AUDIO SUPPORT" };
+   var labels = { locked: "ENABLE SOUND", on: "SOUND ON", muted: "MUTED", unsupported: "NO AUDIO" };
    b.textContent = labels[st] || labels.locked;
    b.setAttribute("aria-pressed", String(st === "on"));
-   b.title = st === "on" ? "Click to mute" : st === "muted" ? "Click to unmute" : "Browsers need a click before they play sound";
+   b.title = st === "on" ? "Click to mute" : st === "muted" ? "Click to unmute"
+     : st === "unsupported" ? "This browser cannot play web audio" : "Browsers need a click before they play sound";
  }
  function onSoundClick() {
    ensureEngine();
